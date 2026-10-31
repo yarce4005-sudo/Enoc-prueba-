@@ -1,0 +1,11 @@
+ENOC — adaptación Supabase + R2
+
+index.html: catálogo conectado directamente a Supabase (lectura de categorías, productos, modelos, variantes, configuración y creación de pedidos).
+admin.html: operaciones de tablas y RPC directamente en Supabase; autenticación Supabase Auth.
+login.html: inicio de sesión Supabase Auth y validación de profiles.role=admin.
+
+IMPORTANTE: el Worker de carga de imágenes R2 se conserva como servicio exclusivo de imágenes y recibe el JWT de Supabase. Su validación de JWT debe estar configurada en Cloudflare para el proyecto eiyqyjoronbttxyxcbez. No se ha podido probar desde aquí.
+
+Pendientes que NO se han simulado: integración de tasa BCV (actual e histórica), operación Cashea de contingencia y prueba real de carga R2. El formulario Cashea de contingencia se bloquea de forma segura para evitar guardar en staging.
+
+No se modificó la base antigua ni se publicaron los archivos.
