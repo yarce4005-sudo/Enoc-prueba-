@@ -2277,7 +2277,7 @@ function setENOCPushUI(state,message){
   const action=document.getElementById('enocPushNoticeBtn');
   if(btn){
     btn.disabled=!!state.busy;
-    btn.textContent=state.busy?'🔔 Configurando…':state.active?'🔔 Notificaciones activas':'🔔 Activar push';
+    btn.textContent=state.busy?'🔔 Configurando…':state.active?'🔔 Dispositivo registrado':'🔔 Activar push';
     btn.title=message||'Recibe avisos de nuevos pedidos en este dispositivo.';
   }
   if(notice){
@@ -2348,8 +2348,8 @@ async function setupENOCPush(session, askPermission=true){
     });
     const savedData=await saved.json().catch(()=>({}));
     if(!saved.ok||!savedData.ok)throw new Error(savedData.error||'Supabase no pudo guardar la suscripción.');
-    setENOCPushUI({active:true},'Este dispositivo está registrado en Supabase y recibirá avisos de nuevos pedidos.');
-    if(typeof toast==='function')toast('¡Notificaciones ENOC activadas!',true);
+    setENOCPushUI({active:true},'La suscripción de este dispositivo quedó guardada en Supabase. La entrega de avisos depende del servicio que envía las notificaciones cuando entra un pedido.');
+    if(typeof toast==='function')toast('Dispositivo registrado para notificaciones.',true);
     return true;
   }catch(error){
     console.error('[ENOC push]',error);

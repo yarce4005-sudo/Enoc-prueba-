@@ -1,20 +1,24 @@
-ENOC — adaptación Supabase + R2
+# ENOC Admin para iPhone (PWA)
 
-index.html: catálogo conectado directamente a Supabase (lectura de categorías, productos, modelos, variantes, configuración y creación de pedidos).
-admin.html: operaciones de tablas y RPC directamente en Supabase; autenticación Supabase Auth.
-login.html: inicio de sesión Supabase Auth y validación de profiles.role=admin.
+## Contenido
+- `admin.html`: administrador ENOC corregido, conserva las mejoras de imágenes y el registro push mediante Supabase.
+- `admin.webmanifest`: configuración de instalación como app.
+- `sw.js`: service worker, recepción Web Push y apertura del administrador al tocar una notificación.
+- `icons/`: iconos proporcionados para iPhone y PWA.
 
-IMPORTANTE: el Worker de carga de imágenes R2 se conserva como servicio exclusivo de imágenes y recibe el JWT de Supabase. Su validación de JWT debe estar configurada en Cloudflare para el proyecto eiyqyjoronbttxyxcbez. No se ha podido probar desde aquí.
+## Publicación
+1. Haz una copia de seguridad de los archivos actuales.
+2. Publica `admin.html`, `admin.webmanifest`, `sw.js` y la carpeta `icons/` en la misma carpeta/ruta del administrador.
+3. Mantén el sitio bajo HTTPS.
+4. No cambies las credenciales ni las variables de Supabase del administrador.
+5. En iPhone, abre la URL del administrador en Safari → Compartir → Añadir a pantalla de inicio.
+6. Abre ENOC desde el icono instalado, inicia sesión como administrador y pulsa Activar notificaciones.
 
-Pendientes que NO se han simulado: integración de tasa BCV (actual e histórica), operación Cashea de contingencia y prueba real de carga R2. El formulario Cashea de contingencia se bloquea de forma segura para evitar guardar en staging.
+## Estado de notificaciones
+El administrador obtiene la clave pública VAPID y registra la suscripción mediante:
+`/functions/v1/enoc-push-subscribe`
 
-No se modificó la base antigua ni se publicaron los archivos.
+Este paquete prepara el cliente para registrar el dispositivo y recibir mensajes Web Push. **No incluye ni despliega el servicio servidor que debe enviar el mensaje cuando se crea un pedido/venta.** Ese servicio debe existir y usar las suscripciones guardadas en Supabase junto con las claves privadas VAPID. Hasta probar ese envío real, no se debe considerar validada la notificación automática de ventas.
 
-
-NOTIFICACIONES PUSH (Supabase)
-- admin.html registra el dispositivo usando la Edge Function enoc-push-subscribe.
-- sw.js recibe y muestra las notificaciones push.
-- Las suscripciones se guardan en public.push_subscriptions de Supabase.
-- Los pedidos nuevos disparan el trigger de Supabase orders -> enoc-order-push.
-- Cloudflare se utiliza únicamente para las imágenes en R2.
-- En iPhone, para recibir push web, agrega primero el catálogo/panel a la pantalla de inicio y abre la app instalada. Luego toca Activar push y acepta el permiso.
+## Seguridad y datos
+El service worker no almacena en caché páginas autenticadas, sesiones, API ni datos privados. La base de datos sigue siendo Supabase. No se incluye ninguna clave secreta nueva.
