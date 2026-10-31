@@ -984,7 +984,7 @@ async function uploadImageToR2(path, file) {
     credentials:"omit"
   });
   const result=await response.json().catch(()=>({}));
-  if(!response.ok||!result.publicUrl)throw new Error(result.error||`Falló la subida directa a R2 (${response.status}).`);
+  if(!response.ok||typeof result.publicUrl!=="string"||!/^https?:\/\//i.test(result.publicUrl))throw new Error(result.error||`Falló la subida directa a R2 (${response.status}).`);
   return result.publicUrl;
 }
 
@@ -1338,17 +1338,18 @@ async function editProductForm(p=null){
   <footer class="product-modal-foot"><button class="btn ghost" type="button" id="cancelProductBottom">Cancelar</button><span class="product-save-msg" id="productSaveMsg">SKU único · Precio igual o mayor que cero.</span><button class="btn" type="submit" id="saveProductBtn">${p?"Guardar cambios":"Guardar producto"}</button></footer>
  </form></div>`);
  const f=$("productEditor"), backdrop=$("productModalBackdrop");
+ let productCreatedId=null;
  const closeProduct=()=>backdrop.remove();$("cancelProduct").onclick=closeProduct;$("cancelProductBottom").onclick=closeProduct;
  backdrop.addEventListener("click",ev=>{if(ev.target===backdrop)closeProduct()});
  document.querySelectorAll("[data-product-section]").forEach(b=>b.onclick=()=>{const ids={general:"productGeneralSection",models:"productModelsSection",preview:"productPreviewSection",status:"productStatusSection"};document.querySelectorAll("[data-product-section]").forEach(x=>x.classList.toggle("active",x===b));document.getElementById(ids[b.dataset.productSection])?.scrollIntoView({behavior:"smooth",block:"start"})});
  const updatePreview=()=>{const val=n=>f.elements[n]?.value||"";$("productPreviewName").textContent=val("name")||"Nombre del producto";$("productPreviewDescription").textContent=val("description")||"Descripción del producto";$("productPreviewPrice").textContent=money(Number(val("price"))||0);const url=val("image_url");$("productPreviewImage").innerHTML=url?`<img src="${esc(url)}" alt="Vista previa" style="width:100%;height:100%;object-fit:contain">`:"Imagen"};f.addEventListener("input",updatePreview);f.elements.image_url.addEventListener("change",updatePreview);
  document.addEventListener("keydown",function escProduct(ev){if(ev.key==="Escape"&&document.getElementById("productModalBackdrop")){closeProduct();document.removeEventListener("keydown",escProduct)}});
  const newPhotoInput=$("newProductModelFiles");if(newPhotoInput){newPhotoInput.onchange=()=>{const files=Array.from(newPhotoInput.files||[]);$("newProductPhotoPreview").innerHTML=files.map((file,i)=>`<div class="model-card"><div class="model-photo"><img src="${URL.createObjectURL(file)}" alt="${esc(file.name)}"></div><b>${esc(file.name)}</b><small>Modelo ${i+1}</small></div>`).join("");$("newProductPhotoMsg").textContent=`${files.length} foto(s) seleccionada(s). Se subirán al guardar.`}};
- f.onsubmit=async ev=>{ev.preventDefault();const btn=$("saveProductBtn"),msg=$("productSaveMsg");const d=Object.fromEntries(new FormData(f));d.name=d.name.trim();d.sku=d.sku.trim();d.price=Number(d.price);d.category_id=d.category_id||null;d.active=$("productActiveToggle")?.checked??(p?.active??true);delete d.modelImageFiles;
+ f.onsubmit=async ev=>{ev.preventDefault();const btn=$("saveProductBtn"),msg=$("productSaveMsg");if(!p&&productCreatedId){msg.textContent="El producto ya fue creado. Reintenta únicamente las imágenes fallidas desde el panel de resultados.";return}const d=Object.fromEntries(new FormData(f));d.name=d.name.trim();d.sku=d.sku.trim();d.price=Number(d.price);d.category_id=d.category_id||null;d.active=$("productActiveToggle")?.checked??(p?.active??true);delete d.modelImageFiles;
  if(!d.name||!d.sku||!Number.isFinite(d.price)||d.price<0){msg.textContent="Revisa nombre, SKU y precio.";return}
  const dup=await db.from("products").select("id,sku").ilike("sku",d.sku);if(dup.error){msg.textContent="No se pudo confirmar si el SKU está disponible. El producto NO se ha guardado. "+(dup.error.message||"Error de conexión");const retry=document.createElement("button");retry.type="button";retry.className="btn ghost";retry.style.marginLeft="8px";retry.textContent="Reintentar validación";retry.onclick=()=>{retry.disabled=true;retry.textContent="Reintentando…";msg.textContent="Comprobando nuevamente el SKU…";f.requestSubmit()};msg.append(retry);return}if((dup.data||[]).some(x=>x.id!==p?.id)){msg.textContent="Ese SKU ya está asignado a otro producto.";f.elements.sku.focus();return}
  btn.disabled=true;msg.textContent="Guardando…";try{const res=p?await db.from("products").update(d).eq("id",p.id).select("id").single():await db.from("products").insert(d).select("id").single();if(res.error)throw res.error;
- if(!p){const productId=res.data.id,files=Array.from($("newProductModelFiles")?.files||[]);if(files.length){const bad=files.find(x=>!( ["image/jpeg","image/png","image/webp"].includes(x.type)||/\.(jpe?g|png|webp)$/i.test(x.name))||x.size>10*1024*1024);if(bad)throw new Error(`${bad.name}: usa JPG, PNG o WebP de hasta 10 MB.`);let created=0;for(let i=0;i<files.length;i++){const file=files[i],uploadFile=await compressImageBeforeUpload(file),safe=uploadFile.name.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9._-]/g,"-");const path=`models/${productId}/${Date.now()}-${Math.random().toString(36).slice(2,8)}-${safe}`;const publicUrl=await uploadImageToR2(path,uploadFile);const ins=await db.from("product_models").insert({product_id:productId,name:`Modelo ${String(i+1).padStart(2,"0")}`,image_urls:[publicUrl],active:true});if(ins.error)throw ins.error;created++}msg.textContent=`Producto guardado y ${created} modelo(s) creado(s).`; }await moduleProducts();closeProduct();return}
+ if(!p){const productId=res.data.id;productCreatedId=productId;const files=Array.from($("newProductModelFiles")?.files||[]);if(files.length){msg.textContent="Producto creado. Procesando imágenes…";await processImageBatch(files,{statusEl:$("newProductPhotoMsg"),label:"Imágenes del producto",processFile:async(file,i)=>{validateImageUploadFile(file);const uploadFile=await compressImageBeforeUpload(file);const safe=uploadFile.name.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9._-]/g,"-");const path=`models/${productId}/${Date.now()}-${Math.random().toString(36).slice(2,8)}-${safe}`;const publicUrl=await uploadImageToR2(path,uploadFile);const ins=await db.from("product_models").insert({product_id:productId,name:`Modelo ${String(i+1).padStart(2,"0")}`,image_urls:[publicUrl],active:true});if(ins.error)throw ins.error;},onAllSuccess:async()=>{msg.textContent="Producto guardado y todas las imágenes se cargaron correctamente.";await moduleProducts();closeProduct();}});return}await moduleProducts();closeProduct();return}
  msg.textContent="Cambios guardados correctamente.";await moduleProducts();
  }catch(e){msg.textContent="No se pudo guardar: "+(e.message||e);showModuleError(e)}finally{btn.disabled=false}};
  if(p){await loadProductModels(p.id);$("syncProductImagesBtn").onclick=async()=>{const b=$("syncProductImagesBtn");b.disabled=true;try{await syncProductImagesToModels(p.id)}catch(e){$("modelManageMsg").textContent="No se pudo sincronizar: "+(e.message||e)}finally{b.disabled=false}}}
@@ -1362,10 +1363,7 @@ async function editProductForm(p=null){
    box.querySelectorAll("[data-editinline-model]").forEach(b=>b.onclick=()=>openInlineModelEditor(b.dataset.editinlineModel,productId));
   }catch(e){box.innerHTML="";$("modelManageMsg").textContent="No se pudieron cargar los modelos: "+(e.message||e)}
  }
- if(p){$("createModelsBtn").onclick=async()=>{const input=$("modelImageFiles"),files=Array.from(input.files||[]),msg=$("modelManageMsg"),btn=$("createModelsBtn");if(!files.length){msg.textContent="Selecciona una o varias imágenes desde tu computadora.";return}const bad=files.find(x=>!(["image/jpeg","image/png","image/webp"].includes(x.type)||/\.(jpe?g|png|webp)$/i.test(x.name))||x.size>10*1024*1024);if(bad){msg.textContent=`${bad.name}: usa JPG, PNG o WebP de hasta 10 MB.`;return}btn.disabled=true;let created=0;try{const existing=await db.from("product_models").select("name").eq("product_id",p.id);if(existing.error)throw existing.error;let next=(existing.data||[]).reduce((n,m)=>{const hit=(m.name||"").match(/^Modelo\s+(\d+)$/i);return hit?Math.max(n,Number(hit[1])):n},0)+1;
-  for(const file of files){const uploadFile=await compressImageBeforeUpload(file);const safe=uploadFile.name.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9._-]/g,"-");const path=`models/${p.id}/${Date.now()}-${Math.random().toString(36).slice(2,8)}-${safe}`;const publicUrl=await uploadImageToR2(path,uploadFile);const ins=await db.from("product_models").insert({product_id:p.id,name:`Modelo ${next++}`,image_urls:[publicUrl],active:true});if(ins.error)throw ins.error;created++}
-  input.value="";msg.textContent=`${created} modelo(s) creado(s). Ya aparecen en la sección Stock.`;await loadProductModels(p.id)
- }catch(e){msg.textContent="No se completó la carga: "+(e.message||e)+". Revisa los permisos de R2 en Cloudflare.";showModuleError(e)}finally{btn.disabled=false}}}
+ if(p){$("createModelsBtn").onclick=async()=>{const input=$("modelImageFiles"),files=Array.from(input.files||[]),msg=$("modelManageMsg"),btn=$("createModelsBtn");if(!files.length){msg.textContent="Selecciona una o varias imágenes desde tu computadora.";return}btn.disabled=true;try{const existing=await db.from("product_models").select("name").eq("product_id",p.id);if(existing.error)throw existing.error;let next=(existing.data||[]).reduce((n,m)=>{const hit=(m.name||"").match(/^Modelo\s+(\d+)$/i);return hit?Math.max(n,Number(hit[1])):n},0)+1;await processImageBatch(files,{statusEl:msg,label:"Imágenes de modelos",processFile:async(file)=>{validateImageUploadFile(file);const uploadFile=await compressImageBeforeUpload(file);const safe=uploadFile.name.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9._-]/g,"-");const path=`models/${p.id}/${Date.now()}-${Math.random().toString(36).slice(2,8)}-${safe}`;const publicUrl=await uploadImageToR2(path,uploadFile);const ins=await db.from("product_models").insert({product_id:p.id,name:`Modelo ${next++}`,image_urls:[publicUrl],active:true});if(ins.error)throw ins.error;},onAllSuccess:async()=>{input.value="";msg.textContent="Todas las imágenes se cargaron correctamente. Actualizando modelos…";await loadProductModels(p.id);}});}catch(e){msg.textContent="No se pudo iniciar el proceso: "+(e.message||e);showModuleError(e)}finally{btn.disabled=false}}}
 
 }
  // Gestión unificada de modelos y variantes dentro de Productos.
@@ -2664,27 +2662,61 @@ function moduleMerchandiseQuoter(){
 
 <script>
 /* Optimización de imágenes de prueba: solo afecta a nuevas subidas desde esta copia. */
+function validateImageUploadFile(file) {
+  if (!file || !( ["image/jpeg","image/png","image/webp"].includes(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name||"") )) throw new Error("Formato no válido. Usa JPG, JPEG, PNG o WebP.");
+  if (file.size > 10 * 1024 * 1024) throw new Error("El archivo supera el límite de 10 MB.");
+  return true;
+}
+
 async function compressImageBeforeUpload(file, options = {}) {
   if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type || "")) return file;
+  let bitmap;
   try {
-    const maxDimension = options.maxDimension || 1800, quality = options.quality || 0.84;
-    const bitmap = await createImageBitmap(file);
+    const maxDimension = options.maxDimension ?? 1800, quality = options.quality ?? 0.84;
+    bitmap = await createImageBitmap(file);
     const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
     const width = Math.max(1, Math.round(bitmap.width * scale)), height = Math.max(1, Math.round(bitmap.height * scale));
     const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext("2d", { alpha: true });
-    if (!ctx) { bitmap.close?.(); return file; }
-    ctx.drawImage(bitmap, 0, 0, width, height); bitmap.close?.();
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/webp", quality));
-    if (!blob || blob.size >= file.size * 0.9) return file;
+    if (!ctx) throw new Error("No se pudo crear el contexto de optimización.");
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const blob = await new Promise((resolve,reject)=>canvas.toBlob(result=>result?resolve(result):reject(new Error("El navegador no pudo convertir la imagen a WebP.")), "image/webp", quality));
+    if (blob.size >= file.size * 0.9) return file;
     const base = (file.name || "imagen").replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "-") || "imagen";
     const optimized = new File([blob], base + ".webp", { type: "image/webp", lastModified: Date.now() });
     console.info("[ENOC imagen]", file.name, file.size, "->", optimized.size, "bytes");
     return optimized;
   } catch (error) {
-    console.warn("[ENOC imagen] No se pudo optimizar; se subirá el original.", error);
+    console.warn("[ENOC imagen] No se pudo optimizar; se conservará el original.", error);
     return file;
-  }
+  } finally { try { bitmap?.close?.(); } catch (_) {} }
+}
+
+/* Procesamiento secuencial: cada archivo tiene su propio resultado y reintento. */
+async function processImageBatch(files, options = {}) {
+  const statusEl=options.statusEl;
+  if(!statusEl) throw new Error("No se encontró el área para mostrar el progreso de las imágenes.");
+  const items=Array.from(files||[]).map((file,index)=>({file,index,status:"pending",error:"",attempts:0}));
+  let busy=false,allSuccessNotified=false;
+  const summary=()=>({total:items.length,success:items.filter(x=>x.status==="success").length,failed:items.filter(x=>x.status==="error").length,pending:items.filter(x=>x.status==="pending"||x.status==="processing").length});
+  const render=()=>{
+    const s=summary();
+    statusEl.innerHTML=`<div style="margin-top:10px;padding:12px;border:1px solid #dce6f5;border-radius:10px;background:#f8faff;color:#243b60;font-size:12px;line-height:1.5"><strong>${esc(options.label||"Carga de imágenes")}</strong><div style="margin:4px 0 8px">Procesadas: ${s.success+s.failed}/${s.total} · Correctas: <b style="color:#087a50">${s.success}</b> · Fallidas: <b style="color:#b42318">${s.failed}</b>${s.pending?` · Pendientes: ${s.pending}`:""}</div><div style="height:7px;background:#e5ebf5;border-radius:99px;overflow:hidden"><div style="height:100%;width:${s.total?Math.round((s.success+s.failed)/s.total*100):0}%;background:#1763ff;transition:width .15s"></div></div><div style="display:grid;gap:6px;margin-top:10px">${items.map(item=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 8px;background:#fff;border:1px solid #e5ebf5;border-radius:8px"><span style="min-width:0;overflow-wrap:anywhere"><b>${esc(item.file.name||`Imagen ${item.index+1}`)}</b><small style="display:block;color:${item.status==="error"?"#b42318":item.status==="success"?"#087a50":"#71809b"}">${item.status==="success"?"✓ Cargada correctamente":item.status==="processing"?"Procesando…":item.status==="error"?`Error: ${esc(item.error)}`:"En espera"}</small></span>${item.status==="error"?`<button type="button" data-retry-image="${item.index}" style="flex:none;border:1px solid #cbd8ef;border-radius:7px;padding:7px 10px;color:#145dff;background:#fff;font-weight:700">Reintentar</button>`:""}</div>`).join("")}</div></div>`;
+  };
+  const notifyIfComplete=async()=>{if(!allSuccessNotified&&items.length&&items.every(x=>x.status==="success")){allSuccessNotified=true;try{await options.onAllSuccess?.()}catch(error){console.error("[ENOC imagen] Las imágenes se cargaron, pero falló la actualización de la vista:",error);allSuccessNotified=false}}};
+  const runOne=async index=>{
+    const item=items[index];if(!item||busy||item.status==="success")return;
+    busy=true;item.status="processing";item.error="";item.attempts++;render();
+    try{await options.processFile(item.file,item.index);item.status="success";item.error=""}
+    catch(error){item.status="error";item.error=String(error?.message||error||"Error desconocido");console.error("[ENOC imagen] Falló un archivo; se continuará con los demás:",item.file.name,error)}
+    finally{busy=false;render();await notifyIfComplete()}
+  };
+  statusEl.onclick=async event=>{const button=event.target.closest?.("[data-retry-image]");if(!button||busy)return;const index=Number(button.dataset.retryImage);if(Number.isInteger(index)&&items[index]?.status==="error"){button.disabled=true;await runOne(index)}};
+  render();
+  for(let i=0;i<items.length;i++) await runOne(i);
+  const result=summary();
+  if(result.failed)console.warn(`[ENOC imagen] Lote finalizado: ${result.success} correctas, ${result.failed} fallidas. Reintenta cada archivo desde su botón.`);
+  return {items,summary:result};
 }
 </script>
 
