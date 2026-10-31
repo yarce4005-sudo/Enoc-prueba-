@@ -2239,7 +2239,7 @@ async function loadHome(){
   $("catTxt").textContent=ok?"Datos del catálogo conectados":"No se pudo verificar el catálogo";
   if(c.error)errs.push("catálogo: "+c.error.message);
   $("conn").textContent=errs.length?"Con errores":"Conectado";
-  if(errs.length)$("homeErr").innerHTML=`<div class="banner err">No se pudo leer: ${esc(errs.join(" · "))}. Revisa la sesión y los permisos configurados en Cloudflare.</div>`;
+  if(errs.length)$("homeErr").innerHTML=`<div class="banner err">No se pudo leer: ${esc(errs.join(" · "))}. Revisa la sesión y los permisos de Supabase.</div>`;
 }
 
 /* ---------- Notificaciones push ENOC ---------- */
@@ -2250,13 +2250,93 @@ function enocUrlBase64ToUint8Array(base64String){
   for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);
   return out;
 }
-async function setupENOCPush(session, askPermission=true){
+function setENOCPushUI(state,message){
   const btn=document.getElementById('enocPushBtn');
-  if(btn){btn.textContent='🔔 Push pendiente de migración';btn.title='Las notificaciones push todavía dependen de un servicio anterior que no se ha migrado.';}
   const notice=document.getElementById('enocPushNotice');
-  if(notice){notice.hidden=false;notice.textContent='Las notificaciones push se habilitarán cuando su servicio esté migrado a Cloudflare.';}
-  if(typeof toast==='function')toast('Las notificaciones push aún no están migradas a Cloudflare.',false);
-  return false;
+  const title=notice?.querySelector('strong'),copy=notice?.querySelector('span');
+  const action=document.getElementById('enocPushNoticeBtn');
+  if(btn){
+    btn.disabled=!!state.busy;
+    btn.textContent=state.busy?'🔔 Configurando…':state.active?'🔔 Notificaciones activas':'🔔 Activar push';
+    btn.title=message||'Recibe avisos de nuevos pedidos en este dispositivo.';
+  }
+  if(notice){
+    notice.hidden=!!state.active;
+    if(title)title.textContent=state.install?'Instala ENOC en tu iPhone':state.denied?'Permiso de notificaciones bloqueado':state.busy?'Configurando notificaciones':'Activa las notificaciones';
+    if(copy)copy.textContent=message||'Recibe avisos de nuevos pedidos en este dispositivo.';
+    if(action){action.textContent=state.install?'Cómo instalar':state.denied?'Revisar ajustes':'Activar';action.disabled=!!state.busy;}
+  }
+}
+async function setupENOCPush(session, askPermission=true){
+  if(!session?.access_token){
+    setENOCPushUI({active:false},'Inicia sesión para activar las notificaciones.');
+    return false;
+  }
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)){
+    const isApple=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const standalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
+    const msg=isApple&&!standalone
+      ?'En iPhone, agrega ENOC a la pantalla de inicio y abre la app instalada para activar las notificaciones.'
+      :'Este navegador no admite notificaciones push. Usa un navegador compatible.';
+    setENOCPushUI({active:false,install:isApple&&!standalone},msg);
+    return false;
+  }
+  const standalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
+  if(/iPhone|iPad|iPod/i.test(navigator.userAgent)&&!standalone){
+    const msg='En iPhone, abre Compartir → Añadir a pantalla de inicio. Luego abre ENOC desde su icono y activa las notificaciones.';
+    setENOCPushUI({active:false,install:true},msg);
+    if(askPermission&&typeof toast==='function')toast(msg,false);
+    return false;
+  }
+  if(Notification.permission==='denied'){
+    setENOCPushUI({active:false,denied:true},'El permiso está bloqueado. Actívalo en los ajustes de notificaciones de ENOC.');
+    return false;
+  }
+  if(!askPermission&&Notification.permission!=='granted'){
+    setENOCPushUI({active:false},'Recibe avisos de nuevos pedidos en este dispositivo.');
+    return false;
+  }
+  try{
+    setENOCPushUI({active:false,busy:true},'Conectando con Supabase…');
+    if(askPermission&&Notification.permission!=='granted'){
+      const permission=await Notification.requestPermission();
+      if(permission!=='granted'){
+        setENOCPushUI({active:false,denied:permission==='denied'},permission==='denied'?'Permiso bloqueado en los ajustes del dispositivo.':'No se concedió el permiso de notificaciones.');
+        return false;
+      }
+    }
+    if(Notification.permission!=='granted')return false;
+    const registration=await navigator.serviceWorker.register('./sw.js',{scope:'./'});
+    await navigator.serviceWorker.ready;
+    const headers={apikey:ENOC_SUPABASE_KEY,Authorization:'Bearer '+session.access_token};
+    const endpoint=ENOC_SUPABASE_URL+'/functions/v1/enoc-push-subscribe';
+    const keyResponse=await fetch(endpoint,{method:'GET',headers,cache:'no-store'});
+    const keyData=await keyResponse.json().catch(()=>({}));
+    if(!keyResponse.ok||!keyData.publicKey)throw new Error(keyData.error||'Supabase no devolvió la clave pública VAPID.');
+    let subscription=await registration.pushManager.getSubscription();
+    if(!subscription){
+      subscription=await registration.pushManager.subscribe({
+        userVisibleOnly:true,
+        applicationServerKey:enocUrlBase64ToUint8Array(keyData.publicKey)
+      });
+    }
+    const saved=await fetch(endpoint,{
+      method:'POST',
+      headers:{...headers,'Content-Type':'application/json'},
+      body:JSON.stringify(subscription.toJSON()),
+      cache:'no-store'
+    });
+    const savedData=await saved.json().catch(()=>({}));
+    if(!saved.ok||!savedData.ok)throw new Error(savedData.error||'Supabase no pudo guardar la suscripción.');
+    setENOCPushUI({active:true},'Este dispositivo está registrado en Supabase y recibirá avisos de nuevos pedidos.');
+    if(typeof toast==='function')toast('¡Notificaciones ENOC activadas!',true);
+    return true;
+  }catch(error){
+    console.error('[ENOC push]',error);
+    setENOCPushUI({active:false},error?.message||'No se pudieron activar las notificaciones.');
+    if(typeof toast==='function')toast(error?.message||'No se pudieron activar las notificaciones.',false);
+    return false;
+  }
 }
 
 /* ---------- Sesión ---------- */
@@ -2271,22 +2351,8 @@ async function init(){
   const pushNotice=document.getElementById("enocPushNotice");
   const pushNoticeBtn=document.getElementById("enocPushNoticeBtn");
   if(pushBtn) pushBtn.addEventListener("click",()=>setupENOCPush(session,true));
-  if(pushBtn && ("Notification" in window) && Notification.permission==="granted") { pushBtn.textContent="🔔 Registrar este dispositivo"; }
   if(pushNoticeBtn && pushBtn) pushNoticeBtn.addEventListener("click",()=>pushBtn.click());
-  if(pushNotice) {
-    pushNotice.hidden=false;
-    if(("Notification" in window) && Notification.permission==="granted") {
-      const title=pushNotice.querySelector("strong"), copy=pushNotice.querySelector("span"), action=document.getElementById("enocPushNoticeBtn");
-      if(title) title.textContent="Registra este dispositivo";
-      if(copy) copy.textContent="Permite que ENOC envíe avisos de nuevos pedidos aquí.";
-      if(action) action.textContent="Registrar";
-    } else if(("Notification" in window) && Notification.permission==="denied") {
-      const title=pushNotice.querySelector("strong"), copy=pushNotice.querySelector("span"), action=document.getElementById("enocPushNoticeBtn");
-      if(title) title.textContent="Notificaciones bloqueadas";
-      if(copy) copy.textContent="Permite las notificaciones desde los ajustes del navegador o de la app instalada.";
-      if(action) action.textContent="Reintentar";
-    }
-  }
+  setupENOCPush(session,false);
   $("out").onclick=()=>{sessionStorage.removeItem("enoc_admin_session");db.auth.signOut().finally(()=>location.replace(LOGIN_URL))};
   $("q").addEventListener("input",filterMods);
   window.addEventListener("hashchange",render);

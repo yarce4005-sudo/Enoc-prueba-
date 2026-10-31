@@ -9,3 +9,12 @@ IMPORTANTE: el Worker de carga de imágenes R2 se conserva como servicio exclusi
 Pendientes que NO se han simulado: integración de tasa BCV (actual e histórica), operación Cashea de contingencia y prueba real de carga R2. El formulario Cashea de contingencia se bloquea de forma segura para evitar guardar en staging.
 
 No se modificó la base antigua ni se publicaron los archivos.
+
+
+NOTIFICACIONES PUSH (Supabase)
+- admin.html registra el dispositivo usando la Edge Function enoc-push-subscribe.
+- sw.js recibe y muestra las notificaciones push.
+- Las suscripciones se guardan en public.push_subscriptions de Supabase.
+- Los pedidos nuevos disparan el trigger de Supabase orders -> enoc-order-push.
+- Cloudflare se utiliza únicamente para las imágenes en R2.
+- En iPhone, para recibir push web, agrega primero el catálogo/panel a la pantalla de inicio y abre la app instalada. Luego toca Activar push y acepta el permiso.
