@@ -1118,7 +1118,7 @@ function moduleVatCalculator(){
   <div class="vat-layout" style="display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.9fr);gap:18px;align-items:start">
     <section class="card" style="padding:20px">
       <h3 style="margin:0 0 8px">Datos de la factura</h3>
-      <p class="lead">Introduce el precio final en dólares. La tasa BCV se consulta automáticamente desde la API de Cloudflare.</p>
+      <p class="lead">Introduce el precio final en dólares. La tasa BCV se consulta desde Supabase y puedes elegir la fecha que necesitas.</p>
       <label for="vatPrice" style="display:block;font-weight:600;margin:16px 0 6px">Precio final con IVA incluido (USD)</label>
       <input id="vatPrice" type="number" min="0" step="0.01" value="30" style="width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;font:inherit">
       <label for="vatDate" style="display:block;font-weight:600;margin:16px 0 6px">Fecha de la tasa BCV</label>
