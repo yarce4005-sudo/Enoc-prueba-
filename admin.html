@@ -1223,16 +1223,18 @@ async function loadAutomaticVatRate(selectedDate=null){
   }
   input.dispatchEvent(new Event("input",{bubbles:true}));
 }
- const ensureProductPrimaryImage=async(productId,imageUrl)=>{
-  if(!productId||!imageUrl)return false;
-  const current=await db.from("products").select("image_url,image_urls").eq("id",productId).single();
-  if(current.error)throw current.error;
-  const hasImage=(Array.isArray(current.data?.image_urls)&&current.data.image_urls.some(Boolean))||Boolean(current.data?.image_url);
-  if(hasImage)return false;
-  const saved=await db.from("products").update({image_url:imageUrl,image_urls:[imageUrl]}).eq("id",productId);
-  if(saved.error)throw saved.error;
-  return true;
+// Helper global: lo usan tanto el editor de productos como el editor de modelos.
+const ensureProductPrimaryImage=async(productId,imageUrl)=>{
+ if(!productId||!imageUrl)return false;
+ const current=await db.from("products").select("image_url,image_urls").eq("id",productId).single();
+ if(current.error)throw current.error;
+ const hasImage=(Array.isArray(current.data?.image_urls)&&current.data.image_urls.some(Boolean))||Boolean(current.data?.image_url);
+ if(hasImage)return false;
+ const saved=await db.from("products").update({image_url:imageUrl,image_urls:[imageUrl]}).eq("id",productId);
+ if(saved.error)throw saved.error;
+ return true;
 };
+
 async function moduleProducts(){
  moduleShell("Catálogo","Gestiona categorías, productos, modelos y variantes desde un solo panel.",`
   <div id="catalogHierarchy" class="catalog-hierarchy"><div class="catalog-loading"><span class="catalog-spinner"></span> Cargando catálogo…</div></div>`);
@@ -1240,7 +1242,6 @@ async function moduleProducts(){
  let categories=[],products=[],models=[],selectedCategory=null,selectedProduct=null,selectedModel=null,level=1,search="",variantSearch="",modelTab="variants";
  const modelImageOf=p=>models.find(m=>m.product_id===p?.id&&Array.isArray(m.image_urls)&&m.image_urls.some(Boolean))?.image_urls?.find(Boolean)||"";
  const imgOf=p=>(Array.isArray(p?.image_urls)&&p.image_urls.find(Boolean))||p?.image_url||modelImageOf(p)||"";
-
  const moneyLabel=v=>v===null||v===undefined||v===""?"—":money(v);
  const activeTag=active=>`<span class="catalog-status ${active===false?"is-off":"is-on"}"><i></i>${active===false?"Inactivo":"Activo"}</span>`;
  const imageBox=(url,label,cls="")=>`<div class="catalog-thumb ${cls}">${url?`<img src="${esc(url)}" alt="${esc(label||"Imagen del producto")}" loading="lazy">`:`<span class="catalog-thumb-placeholder">▧</span>`}</div>`;
